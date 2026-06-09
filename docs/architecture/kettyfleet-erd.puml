@@ -1,0 +1,241 @@
+@startuml KettyFleet_ERD
+
+' =========================
+' USERS
+' =========================
+entity "users" as users {
+  * id : uuid
+  --
+  full_name : text
+  phone : text
+  email : text
+  role : text
+  is_active : boolean
+  created_at : timestamp
+  updated_at : timestamp
+}
+
+' =========================
+' VEHICLES
+' =========================
+entity "vehicles" as vehicles {
+  * id : uuid
+  --
+  vehicle_code : text
+  registration_number : text
+  vehicle_type : text
+  year : int
+  ownership_type : text
+  passenger_capacity : int
+  status : text
+  logbook_number : text
+  notes : text
+  created_at : timestamp
+  updated_at : timestamp
+}
+
+' =========================
+' CLIENTS
+' =========================
+entity "clients" as clients {
+  * id : uuid
+  --
+  client_name : text
+  client_type : text
+  phone : text
+  email : text
+  address : text
+  created_at : timestamp
+}
+
+' =========================
+' JOBS (CDO)
+' =========================
+entity "jobs" as jobs {
+  * id : uuid
+  --
+  cdo_number : text
+  client_id : uuid
+  vehicle_id : uuid
+  driver_id : uuid
+  job_type : text
+  job_status : text
+  start_date : date
+  end_date : date
+  pickup_location : text
+  destination : text
+  notes : text
+  created_by : uuid
+  created_at : timestamp
+  updated_at : timestamp
+}
+
+' =========================
+' VEHICLE DAILY REPORTS
+' =========================
+entity "vehicle_daily_reports" as vdr {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  submitted_by : uuid
+  report_date : date
+  current_location : text
+  current_mileage : int
+  vehicle_status : text
+  issues_reported : text
+  expected_return_date : date
+  notes : text
+  created_at : timestamp
+}
+
+' =========================
+' COMPLIANCE TABLES
+' =========================
+
+entity "insurance_records" as insurance {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  insurance_company : text
+  cover_type : text
+  premium_amount : decimal
+  passenger_capacity : int
+  issue_date : date
+  expiry_date : date
+  certificate_url : text
+  status : text
+  created_at : timestamp
+}
+
+entity "inspection_records" as inspection {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  booking_date : date
+  inspection_date : date
+  inspection_center : text
+  inspection_status : text
+  expiry_date : date
+  certificate_url : text
+  notes : text
+  created_at : timestamp
+}
+
+entity "speed_governor_records" as spg {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  supplier_name : text
+  issue_date : date
+  expiry_date : date
+  certificate_url : text
+  status : text
+  created_at : timestamp
+}
+
+entity "rsl_records" as rsl {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  application_date : date
+  valid_until : date
+  certificate_url : text
+  status : text
+  created_at : timestamp
+}
+
+entity "number_plate_records" as plates {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  application_date : date
+  mpesa_reference : text
+  collection_status : text
+  notes : text
+  created_at : timestamp
+}
+
+' =========================
+' MAINTENANCE
+' =========================
+entity "maintenance_records" as maintenance {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  maintenance_date : date
+  repair_type : text
+  description : text
+  quantity : int
+  cost : decimal
+  payment_method : text
+  service_provider : text
+  recorded_by : uuid
+  created_at : timestamp
+}
+
+' =========================
+' FUEL
+' =========================
+entity "fuel_records" as fuel {
+  * id : uuid
+  --
+  vehicle_id : uuid
+  job_id : uuid
+  fillup_date : date
+  odometer_before : int
+  odometer_after : int
+  fuel_litres : decimal
+  cost_per_litre : decimal
+  total_cost : decimal
+  kilometres_covered : int
+  fuel_efficiency : decimal
+  recorded_by : uuid
+  created_at : timestamp
+}
+
+' =========================
+' DRIVER RETURNS
+' =========================
+entity "driver_returns" as returns {
+  * id : uuid
+  --
+  job_id : uuid
+  driver_id : uuid
+  ferry_cost : decimal
+  airport_toll : decimal
+  driver_allowance : decimal
+  sundries : decimal
+  fuel_vat : decimal
+  fuel_non_vat : decimal
+  park_fees : decimal
+  invoice_number : text
+  remarks : text
+  created_at : timestamp
+}
+
+' =========================
+' RELATIONSHIPS
+' =========================
+
+users ||--o{ jobs : "creates (created_by)"
+users ||--o{ jobs : "drives (driver_id)"
+users ||--o{ maintenance : "records"
+users ||--o{ fuel : "records"
+users ||--o{ vdr : "submits"
+
+clients ||--o{ jobs : "requests"
+
+vehicles ||--o{ jobs : "assigned"
+vehicles ||--o{ vdr : "has"
+vehicles ||--o{ fuel : "consumes"
+vehicles ||--o{ maintenance : "under"
+vehicles ||--o{ insurance : "has"
+vehicles ||--o{ inspection : "has"
+vehicles ||--o{ spg : "has"
+vehicles ||--o{ rsl : "has"
+vehicles ||--o{ plates : "has"
+
+jobs ||--o{ fuel : "tracks"
+jobs ||--o{ returns : "generates"
+
+@enduml
