@@ -272,3 +272,8 @@ create table rsl_records (
 
     created_at timestamptz default now()
 );
+
+ALTER TABLE jobs
+ADD CONSTRAINTS job_status_check
+CHECK (status IN('scheduled', 'active', 'completed', 'cancelled'));
+

@@ -452,3 +452,19 @@ for delete
 using(
     is_admin()
 );
+
+
+create policy "Admins can fully update jobs"
+on jobs
+for update
+using(
+    is_admin()
+);
+
+create policy "Staff can update jobs only when scheduled"
+on jobs
+for update
+using(
+    is_staff()
+    AND status = 'scheduled'
+);
