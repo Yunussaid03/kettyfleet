@@ -1,14 +1,6 @@
-export default function Home() {
-  return (
-    <main>
-      <h1 className="text-3xl font-bold">
-        Dashboard
-        </h1>
+import {redirect} from "next/navigation";
 
-      <p className="mt-3 text-gray-600">  
-        Welcome to the KettyFleet Transport Management System.
-      </p>
-    </main>
-  );
 
+export default function Home() {             //Acts as dashboard redirect page
+  redirect("/dashboard");
 }
