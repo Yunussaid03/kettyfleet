@@ -7,7 +7,7 @@ export async function updateSession(
   request: NextRequest
 ) {
 
-  let response =
+  const response =
     NextResponse.next({
       request,
     });
@@ -52,9 +52,20 @@ export async function updateSession(
     );
 
 
-  await supabase.auth.getUser();
+ const { data: {user} } =
+   await supabase.auth.getUser();
 
 
-  return response;
+   if (!user) {
+     const loginUrl =request.nextUrl.clone();
+      loginUrl.pathname = "/auth/login";
+
+      return NextResponse.redirect(
+        loginUrl
+      );
+   }
+
+   return response;
 
 }
+
