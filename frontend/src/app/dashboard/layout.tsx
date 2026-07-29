@@ -18,11 +18,13 @@ export default async function DashboardLayout({
     redirect("/auth/login");
   }
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("full_name, role")
     .eq("id", user.id)
     .single();
+    
+
 
   return (
     <>

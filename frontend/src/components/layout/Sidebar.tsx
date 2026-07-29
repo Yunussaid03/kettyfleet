@@ -2,13 +2,22 @@
 
 import { supabase } from "@/lib/supabase/client";
 
+type SideBarProps = {
+    fullName: string;
+    role: string;
+}
 
-export default function Navbar() {
-    async function handleLogout() {
-        await supabase.auth.signOut();
+export default function Sidebar(
+    {
+        fullName,
+        role
+    }: SideBarProps) {
+        async function handleLogout() {
+             await supabase.auth.signOut();
         window.location.href= "/auth/login";
 
-    }
+        }
+    
 
     return (
     <aside className="flex min-h-[calc(100vh-4rem)] w-64 flex-col bg-green-900 p-5 text-white">
@@ -27,6 +36,15 @@ export default function Navbar() {
       </nav>
 
       <div className="mt-auto border-t border-red-700 pt-4">
+
+        <p className="font-medium">
+            {fullName}
+        </p>
+
+        <p className="mb-3text-sm capitalize text-gray-300">
+            {role}
+        </p>
+        
         <button
           onClick={handleLogout}
           className="text-sm text-black-300 hover:text-white"
