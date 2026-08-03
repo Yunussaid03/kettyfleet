@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function VehiclesPage() {
@@ -36,9 +37,18 @@ export default async function VehiclesPage() {
 
   return (
     <div>
-      <h1 className="text-3xl font-bold">
-        Vehicles
-      </h1>
+     <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">
+            Vehicles
+            </h1>
+    
+         
+         <Link href="/dashboard/vehicles/new"
+         className="rounded bg-green-700 px-4 py-2 text-white hover:bg-gree-800">
+            Add Vehicle
+         </Link>
+          </div>
+
 
       <div className="mt-6 grid gap-4 sm: grid-cols-2 lg:grid-cols-4">
         <div className="rounded border p-4">
