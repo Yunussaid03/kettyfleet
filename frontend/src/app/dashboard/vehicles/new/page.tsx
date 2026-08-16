@@ -223,14 +223,14 @@ const [isSubmitting, setIsSubmitting] = useState(false);
             <button
             type="submit"
             disabled={isSubmitting}
-            className="rounded bg-green-700 px-4 py-2 text-white hover:bg-green-800 disabled: cursor-not-allowed disabled: opacity-50">
+            className="rounded bg-green-700 px-4 py-2 font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-green-400 disabled:opacity-100">
                 {isSubmitting ? "Saving..." : "Save Vehicle"}
             </button>
 
             <button
             type="button"
             onClick={() => router.push("/dashboard/vehicles")}
-            className="rounded bg-red-700 px-4 py-2 text-white hover:bg-red-800"
+            className="rounded bg-red-700 px-4 py-2 font-medium text-white hover:bg-red-800"
             >
                 Cancel
             </button>

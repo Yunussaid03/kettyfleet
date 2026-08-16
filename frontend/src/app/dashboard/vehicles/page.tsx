@@ -117,7 +117,14 @@ export default async function VehiclesPage() {
                         key={vehicle.id}
                         className="border-b"
                         >
-                            <td className="p-3">{vehicle.vehicle_code}</td>
+                            <td className="p-3">
+                                <Link
+                                href={`/dashboard/vehicles/${vehicle.id}`}
+                                className = "font-medium text-green-700 hover:underline"
+                                >
+                                    {vehicle.vehicle_code}
+                                </Link>
+                                </td>
                             <td className="p-3">{vehicle.registration_number}</td>
                             <td className="p-3">{vehicle.vehicle_type}</td>
                             <td className="p-3">{vehicle.manufacture_year ?? "_"}</td>
