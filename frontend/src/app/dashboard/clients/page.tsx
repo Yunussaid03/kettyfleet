@@ -1,4 +1,4 @@
-
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 
 
@@ -22,19 +22,22 @@ export default async function ClientsPage() {
         );
     }
 
-     if (clients.length === 0){
-                    return(
-                        <p className="mt-6 text-gray-600">
-                            No clients have been added yet
-                        </p>
-                    );
-                }
+   
 
     return (
         <div>
+        <div className="flex items-center justify-between">
             <h1 className="text-3xl font-bold">
                 Clients
-                </h1>
+            </h1>
+
+                <Link 
+                    href="/dashboard/clients/new"
+                    className="rounded bg-green-700 px-4 py-2 font-medium text-white hover:bg-green-800"
+                    >
+                    Add Client
+                </Link>
+        </div>
 
                 
                 <div className= "mt-6 overflow-auto">
@@ -54,7 +57,14 @@ export default async function ClientsPage() {
                                 <tr
                                 key={ client.id}
                                 className="border-b">
-                                    <td className="p-3">{client.client_name}</td>
+                                    <td className="p-3">
+                                         <Link
+                                              href={`/dashboard/clients/${client.id}`}
+                                               className="font-medium text-green-700 hover:underline"
+                                                 >
+                                                  {client.client_name}
+                                         </Link>
+                                    </td>
                                     <td className="p-3">{client.client_type}</td>
                                     <td className="p-3">{client.phone}</td>
                                     <td className="p-3">{client.email}</td>
@@ -65,7 +75,8 @@ export default async function ClientsPage() {
                     </table>
                     
                 </div>
-        </div>
+                </div>
+       
 
         
     )
