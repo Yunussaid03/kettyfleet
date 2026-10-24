@@ -18,16 +18,14 @@ export default async function DashboardLayout({
     redirect("/auth/login");
   }
 
-  const { data: profile, error: profileError } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("full_name, role")
     .eq("id", user.id)
     .single();
-    
-
 
   return (
-    <>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <Navbar />
 
       <div className="flex">
@@ -40,6 +38,6 @@ export default async function DashboardLayout({
           {children}
         </main>
       </div>
-    </>
+    </div>
   );
 }
