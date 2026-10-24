@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ComplianceDocType,
   ExpiryStatus,
@@ -299,6 +300,14 @@ export default function ComplianceClientTable({
               There are currently no insurance, inspection, speed governor, or
               RSL records in the database.
             </p>
+            <div className="mt-4">
+              <Link
+                href="/dashboard/compliance/new"
+                className="inline-flex items-center rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-blue-700"
+              >
+                Add First Compliance Record &rarr;
+              </Link>
+            </div>
           </div>
         ) : filteredRecords.length === 0 ? (
           <div className="p-8 text-center">
