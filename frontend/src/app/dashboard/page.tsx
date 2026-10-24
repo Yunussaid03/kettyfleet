@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { calculateExpiry } from "./compliance/types";
+import { renderDocTypeBadge, renderExpiryBadge } from "./compliance/formatters";
 
 interface RecentJob {
   id: string;
@@ -53,28 +55,28 @@ function renderStatusBadge(status: string) {
   const s = status.toLowerCase();
   if (s === "active") {
     return (
-      <span className="inline-flex items-center rounded-full border border-blue-200/80 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+      <span className="inline-flex items-center rounded-full border border-blue-200/80 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
         In Transit
       </span>
     );
   }
   if (s === "scheduled") {
     return (
-      <span className="inline-flex items-center rounded-full border border-amber-200/80 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+      <span className="inline-flex items-center rounded-full border border-amber-200/80 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
         Scheduled
       </span>
     );
   }
   if (s === "completed") {
     return (
-      <span className="inline-flex items-center rounded-full border border-emerald-200/80 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+      <span className="inline-flex items-center rounded-full border border-emerald-200/80 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
         Completed
       </span>
     );
   }
   if (s === "cancelled") {
     return (
-      <span className="inline-flex items-center rounded-full border border-rose-200/80 bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700">
+      <span className="inline-flex items-center rounded-full border border-rose-200/80 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
         Cancelled
       </span>
     );
@@ -104,61 +106,203 @@ export default async function DashboardPage() {
     .eq("id", user.id)
     .single();
 
-  // Fetch vehicles summary
-  const { data: vehicles } = await supabase
-    .from("vehicles")
-    .select("id, status");
+  // Concurrent operational data fetching across all implemented modules
+  const [
+    vehiclesRes,
+    clientsRes,
+    jobsRes,
+    recentJobsRes,
+    maintenanceRes,
+    fuelRes,
+    insuranceRes,
+    inspectionRes,
+    speedGovRes,
+    rslRes,
+  ] = await Promise.all([
+    supabase.from("vehicles").select("id, status, current_mileage"),
+    supabase.from("clients").select("id, client_type"),
+    supabase.from("jobs").select("id, status"),
+    supabase
+      .from("jobs")
+      .select(`
+        id,
+        cdo_number,
+        status,
+        start_date,
+        created_at,
+        client:clients(id, client_name),
+        vehicle:vehicles(id, vehicle_code, registration_number),
+        driver:profiles!driver_id(id, full_name)
+      `)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    supabase.from("maintenance_records").select("id, cost, maintencance_date"),
+    supabase
+      .from("fuel_records")
+      .select("id, fuel_amount_litres, fuel_cost_per_litres, km_covered, odometer_before, odometer_after"),
+    supabase
+      .from("insurance_records")
+      .select("id, vehicle_id, insurance_company, expiry_date, status, vehicle:vehicles(id, vehicle_code, registration_number)"),
+    supabase
+      .from("inspection_records")
+      .select("id, vehicle_id, inspection_center, result, expiry_date, vehicle:vehicles(id, vehicle_code, registration_number)"),
+    supabase
+      .from("speed_governor_records")
+      .select("id, vehicle_id, vendor, expiry_date, status, vehicle:vehicles(id, vehicle_code, registration_number)"),
+    supabase
+      .from("rsl_records")
+      .select("id, vehicle_id, issuing_authority, valid_until, status, vehicle:vehicles(id, vehicle_code, registration_number)"),
+  ]);
 
-  const totalVehicles = vehicles?.length ?? 0;
-  const activeVehicles =
-    vehicles?.filter((v) => v.status === "active").length ?? 0;
-  const maintenanceVehicles =
-    vehicles?.filter((v) => v.status === "maintenance").length ?? 0;
-  const inactiveVehicles =
-    vehicles?.filter(
-      (v) => v.status === "inactive" || v.status === "sold"
-    ).length ?? 0;
+  // 1. Vehicles Analytics
+  const vehicles = vehiclesRes.data ?? [];
+  const totalVehicles = vehicles.length;
+  const activeVehicles = vehicles.filter((v) => v.status === "active").length;
 
-  // Fetch clients summary
-  const { data: clients } = await supabase.from("clients").select("id");
-  const totalClients = clients?.length ?? 0;
+  // 2. Clients Analytics
+  const totalClients = clientsRes.data?.length ?? 0;
 
-  // Fetch jobs summary
-  const { data: allJobs } = await supabase.from("jobs").select("id, status");
-  const activeJobsCount =
-    allJobs?.filter((j) => j.status === "active" || j.status === "scheduled")
-      .length ?? 0;
-  const scheduledCount =
-    allJobs?.filter((j) => j.status === "scheduled").length ?? 0;
+  // 3. Jobs Analytics
+  const allJobs = jobsRes.data ?? [];
+  const inTransitCount = allJobs.filter((j) => j.status?.toLowerCase() === "active").length;
+  const scheduledCount = allJobs.filter((j) => j.status?.toLowerCase() === "scheduled").length;
 
-  // Fetch recent jobs with joined details
-  const { data: recentJobsData } = await supabase
-    .from("jobs")
-    .select(`
-      id,
-      cdo_number,
-      status,
-      start_date,
-      created_at,
-      client:clients(id, client_name),
-      vehicle:vehicles(id, vehicle_code, registration_number),
-      driver:profiles!driver_id(id, full_name)
-    `)
-    .order("created_at", { ascending: false })
-    .limit(5);
+  const recentJobs = (recentJobsRes.data as unknown as RecentJob[]) ?? [];
 
-  const recentJobs = (recentJobsData as unknown as RecentJob[]) ?? [];
+  // 3. Financial Analytics (Maintenance & Fuel)
+  const maintenanceRecords = maintenanceRes.data ?? [];
+  const totalMaintenanceExpenditure = maintenanceRecords.reduce(
+    (sum, m) => sum + (Number(m.cost) || 0),
+    0
+  );
 
-  // Determine friendly greeting and name
-  const now = new Date();
-  const hour = now.getHours();
+  const fuelRecords = fuelRes.data ?? [];
+  const totalFuelLitres = fuelRecords.reduce(
+    (sum, f) => sum + (Number(f.fuel_amount_litres) || 0),
+    0
+  );
+  const totalFuelExpenditure = fuelRecords.reduce(
+    (sum, f) =>
+      sum +
+      (Number(f.fuel_amount_litres) || 0) * (Number(f.fuel_cost_per_litres) || 0),
+    0
+  );
+
+  // 4. Compliance Expiry Aggregation
+  const today = new Date();
+  interface ComplianceAlert {
+    id: string;
+    type: "insurance" | "inspection" | "speed_governor" | "rsl";
+    label: string;
+    vehicleDisplay: string;
+    expiryDate: string;
+    daysRemaining: number | null;
+    status: "expired" | "expiring_soon" | "valid" | "unknown";
+  }
+
+  const complianceAlerts: ComplianceAlert[] = [];
+
+  function getVehicleLabel(v: unknown): string {
+    if (!v) return "Unknown Vehicle";
+    const item = Array.isArray(v)
+      ? (v[0] as { vehicle_code?: string | null; registration_number?: string } | undefined)
+      : (v as { vehicle_code?: string | null; registration_number?: string });
+    return item?.vehicle_code
+      ? `${item.vehicle_code} (${item.registration_number})`
+      : item?.registration_number || "Unknown Vehicle";
+  }
+
+  // Insurance
+  for (const item of insuranceRes.data ?? []) {
+    const exp = calculateExpiry(item.expiry_date, today);
+    if (exp.status === "expired" || exp.status === "expiring_soon") {
+      complianceAlerts.push({
+        id: item.id,
+        type: "insurance",
+        label: item.insurance_company,
+        vehicleDisplay: getVehicleLabel(item.vehicle),
+        expiryDate: item.expiry_date,
+        daysRemaining: exp.daysRemaining,
+        status: exp.status,
+      });
+    }
+  }
+
+  // Inspection
+  for (const item of inspectionRes.data ?? []) {
+    const exp = calculateExpiry(item.expiry_date, today);
+    if (exp.status === "expired" || exp.status === "expiring_soon") {
+      complianceAlerts.push({
+        id: item.id,
+        type: "inspection",
+        label: item.inspection_center || "Inspection",
+        vehicleDisplay: getVehicleLabel(item.vehicle),
+        expiryDate: item.expiry_date || "—",
+        daysRemaining: exp.daysRemaining,
+        status: exp.status,
+      });
+    }
+  }
+
+  // Speed Governor
+  for (const item of speedGovRes.data ?? []) {
+    const exp = calculateExpiry(item.expiry_date, today);
+    if (exp.status === "expired" || exp.status === "expiring_soon") {
+      complianceAlerts.push({
+        id: item.id,
+        type: "speed_governor",
+        label: item.vendor,
+        vehicleDisplay: getVehicleLabel(item.vehicle),
+        expiryDate: item.expiry_date || "—",
+        daysRemaining: exp.daysRemaining,
+        status: exp.status,
+      });
+    }
+  }
+
+  // RSL
+  for (const item of rslRes.data ?? []) {
+    const exp = calculateExpiry(item.valid_until, today);
+    if (exp.status === "expired" || exp.status === "expiring_soon") {
+      complianceAlerts.push({
+        id: item.id,
+        type: "rsl",
+        label: `RSL: ${item.issuing_authority || "NTSA"}`,
+        vehicleDisplay: getVehicleLabel(item.vehicle),
+        expiryDate: item.valid_until,
+        daysRemaining: exp.daysRemaining,
+        status: exp.status,
+      });
+    }
+  }
+
+  // Sort compliance alerts: expired first, then ascending by daysRemaining
+  complianceAlerts.sort((a, b) => {
+    if (a.status === "expired" && b.status !== "expired") return -1;
+    if (b.status === "expired" && a.status !== "expired") return 1;
+    return (a.daysRemaining ?? 0) - (b.daysRemaining ?? 0);
+  });
+
+  const totalComplianceDocs =
+    (insuranceRes.data?.length ?? 0) +
+    (inspectionRes.data?.length ?? 0) +
+    (speedGovRes.data?.length ?? 0) +
+    (rslRes.data?.length ?? 0);
+
+  const expiredCount = complianceAlerts.filter((a) => a.status === "expired").length;
+  const expiringSoonCount = complianceAlerts.filter(
+    (a) => a.status === "expiring_soon"
+  ).length;
+
+  // Header Greeting
+  const hour = today.getHours();
   const greeting =
     hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const firstName = profile?.full_name
     ? profile.full_name.split(" ")[0]
-    : "there";
+    : "Operator";
 
-  const formattedDate = now.toLocaleDateString("en-US", {
+  const formattedDate = today.toLocaleDateString("en-US", {
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -167,27 +311,44 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Welcome Header */}
-      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+      {/* Welcome Banner */}
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
             {greeting}, {firstName}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Here&apos;s what&apos;s happening with your fleet today.
+            Real-time fleet performance, operational dispatch, expenditures, and statutory compliance.
           </p>
         </div>
-        <div className="hidden text-right sm:block">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Operations Date
-          </p>
-          <p className="text-sm font-medium text-slate-700">{formattedDate}</p>
+        <div className="flex items-center gap-3">
+          <div className="hidden rounded-lg border border-slate-200/80 bg-white px-3.5 py-1.5 text-right sm:block shadow-2xs">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Operations Center
+            </p>
+            <p className="text-xs font-semibold text-slate-700">{formattedDate}</p>
+          </div>
+          <Link
+            href="/dashboard/jobs/new"
+            className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-blue-700 focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <svg
+              className="-ml-0.5 mr-1.5 h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2.5}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Dispatch Job
+          </Link>
         </div>
       </div>
 
-      {/* Metric Cards Row */}
+      {/* Primary KPI Metrics: 4 Columns */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Total Vehicles */}
+        {/* Card 1: Active Fleet */}
         <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-shadow hover:shadow-sm">
           <div className="flex items-center space-x-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
@@ -207,51 +368,29 @@ export default async function DashboardPage() {
               </svg>
             </div>
             <div>
-              <p className="text-xs font-medium text-slate-500">Total Vehicles</p>
+              <p className="text-xs font-medium text-slate-500">Fleet Assets</p>
               <p className="text-2xl font-bold tracking-tight text-slate-900">
                 {totalVehicles}
               </p>
             </div>
           </div>
-          <p className="mt-3 text-xs font-medium text-emerald-600">
-            {activeVehicles} active in fleet
-          </p>
-        </div>
-
-        {/* Total Clients */}
-        <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-shadow hover:shadow-sm">
-          <div className="flex items-center space-x-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
-              <svg
-                className="h-6 w-6"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-                />
-              </svg>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Total Clients</p>
-              <p className="text-2xl font-bold tracking-tight text-slate-900">
-                {totalClients}
-              </p>
-            </div>
+          <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+            <span className="font-semibold text-emerald-600">
+              {activeVehicles} ready for dispatch
+            </span>
+            <Link
+              href="/dashboard/vehicles"
+              className="text-blue-600 hover:underline"
+            >
+              View fleet &rarr;
+            </Link>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Registered partner accounts
-          </p>
         </div>
 
-        {/* Active Jobs */}
+        {/* Card 2: Active Dispatch Jobs */}
         <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-shadow hover:shadow-sm">
           <div className="flex items-center space-x-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
               <svg
                 className="h-6 w-6"
                 fill="none"
@@ -269,19 +408,24 @@ export default async function DashboardPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Active Jobs</p>
               <p className="text-2xl font-bold tracking-tight text-slate-900">
-                {activeJobsCount}
+                {inTransitCount + scheduledCount}
               </p>
             </div>
           </div>
-          <p className="mt-3 text-xs font-medium text-blue-600">
-            {scheduledCount} scheduled for dispatch
-          </p>
+          <div className="mt-3 flex items-center justify-between text-xs">
+            <span className="text-slate-500">
+              For {totalClients} client accounts
+            </span>
+            <Link href="/dashboard/jobs" className="text-blue-600 hover:underline">
+              All jobs &rarr;
+            </Link>
+          </div>
         </div>
 
-        {/* Needs Attention */}
+        {/* Card 3: Fuel & Energy Cost */}
         <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-shadow hover:shadow-sm">
           <div className="flex items-center space-x-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
               <svg
                 className="h-6 w-6"
                 fill="none"
@@ -292,51 +436,109 @@ export default async function DashboardPage() {
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  d="M4 4v16a1 1 0 001 1h8a1 1 0 001-1V4a1 1 0 00-1-1H5a1 1 0 00-1 1zm10 4h2a2 2 0 012 2v8a2 2 0 002 2h0a2 2 0 002-2V8l-3-3M7 8h4"
                 />
               </svg>
             </div>
             <div>
-              <p className="text-xs font-medium text-slate-500">
-                Needs Attention
-              </p>
+              <p className="text-xs font-medium text-slate-500">Fuel Expenditure</p>
               <p className="text-2xl font-bold tracking-tight text-slate-900">
-                {maintenanceVehicles}
+                KES {totalFuelExpenditure.toLocaleString("en-KE", { maximumFractionDigits: 0 })}
               </p>
             </div>
           </div>
-          <p className="mt-3 text-xs font-medium text-amber-600">
-            Vehicles in maintenance
-          </p>
+          <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+            <span>{totalFuelLitres.toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres logged</span>
+            <Link href="/dashboard/fuel" className="text-blue-600 hover:underline">
+              Fuel logs &rarr;
+            </Link>
+          </div>
+        </div>
+
+        {/* Card 4: Statutory Compliance Status */}
+        <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-shadow hover:shadow-sm">
+          <div className="flex items-center space-x-3">
+            <div
+              className={`flex h-11 w-11 items-center justify-center rounded-lg ${
+                expiredCount > 0
+                  ? "bg-rose-50 text-rose-600"
+                  : expiringSoonCount > 0
+                  ? "bg-amber-50 text-amber-600"
+                  : "bg-emerald-50 text-emerald-600"
+              }`}
+            >
+              <svg
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                />
+              </svg>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Compliance</p>
+              <p className="text-2xl font-bold tracking-tight text-slate-900">
+                {totalComplianceDocs} <span className="text-xs font-normal text-slate-500">docs</span>
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center justify-between text-xs">
+            {expiredCount > 0 ? (
+              <span className="font-semibold text-rose-600">
+                {expiredCount} expired &bull; {expiringSoonCount} due soon
+              </span>
+            ) : expiringSoonCount > 0 ? (
+              <span className="font-semibold text-amber-600">
+                {expiringSoonCount} expiring within 30d
+              </span>
+            ) : (
+              <span className="font-semibold text-emerald-600">
+                All tracked documents valid
+              </span>
+            )}
+            <Link
+              href="/dashboard/compliance"
+              className="text-blue-600 hover:underline"
+            >
+              Audit &rarr;
+            </Link>
+          </div>
         </div>
       </div>
 
-      {/* Main Content Layout: 2 Columns */}
+      {/* Main Grid: Operational Tables & Side Panels */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Left Column (Recent Jobs - 2 cols) */}
-        <div className="lg:col-span-2">
+        {/* Left Column (2 Cols): Recent Jobs & Operational Dispatch */}
+        <div className="space-y-6 lg:col-span-2">
+          {/* Recent Jobs Table Card */}
           <div className="rounded-xl border border-slate-200/80 bg-white shadow-xs">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Recent Jobs
+                  Recent Dispatch Activity
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Latest dispatch and transport assignments
+                  Real-time Customer Delivery Orders (CDO) and vehicle routing
                 </p>
               </div>
               <Link
                 href="/dashboard/jobs"
                 className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
               >
-                View all &rarr;
+                View all jobs &rarr;
               </Link>
             </div>
 
             {recentJobs.length === 0 ? (
               <div className="p-8 text-center">
                 <p className="text-sm text-slate-500">
-                  No jobs have been created yet.
+                  No active jobs found in the dispatch log.
                 </p>
                 <Link
                   href="/dashboard/jobs/new"
@@ -355,7 +557,7 @@ export default async function DashboardPage() {
                       <th className="px-4 py-3">Vehicle</th>
                       <th className="px-4 py-3">Driver</th>
                       <th className="px-4 py-3">Status</th>
-                      <th className="px-6 py-3">Date</th>
+                      <th className="px-6 py-3 text-right">Scheduled</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
@@ -367,7 +569,7 @@ export default async function DashboardPage() {
                         <td className="whitespace-nowrap px-6 py-3.5">
                           <Link
                             href={`/dashboard/jobs/${job.id}`}
-                            className="font-semibold text-slate-900 hover:text-blue-600 hover:underline"
+                            className="font-semibold text-slate-900 transition-colors hover:text-blue-600 hover:underline"
                           >
                             {job.cdo_number}
                           </Link>
@@ -384,7 +586,7 @@ export default async function DashboardPage() {
                         <td className="whitespace-nowrap px-4 py-3.5">
                           {renderStatusBadge(job.status)}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-3.5 text-xs text-slate-500">
+                        <td className="whitespace-nowrap px-6 py-3.5 text-right text-xs text-slate-500">
                           {formatDate(job.start_date ?? job.created_at)}
                         </td>
                       </tr>
@@ -394,207 +596,202 @@ export default async function DashboardPage() {
               </div>
             )}
           </div>
-        </div>
 
-        {/* Right Column (Quick Actions & Fleet Summary - 1 col) */}
-        <div className="space-y-6">
-          {/* Quick Actions Card */}
+          {/* Operational Expenses Summary (Maintenance & Fuel Combined) */}
           <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs">
-            <div className="flex items-center justify-between pb-4">
-              <h2 className="text-base font-bold text-slate-900">
-                Quick Actions
-              </h2>
-              <Link
-                href="/dashboard/jobs/new"
-                className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-blue-700"
-              >
-                + Add Job
-              </Link>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Fleet Operating Costs
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Recorded maintenance repairs and fuel consumption
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-slate-500">
+                Total: KES {(totalMaintenanceExpenditure + totalFuelExpenditure).toLocaleString("en-KE", { maximumFractionDigits: 0 })}
+              </span>
             </div>
 
-            <div className="mt-2 space-y-2.5">
-              <Link
-                href="/dashboard/vehicles/new"
-                className="group flex items-center justify-between rounded-lg border border-slate-100 p-3 transition-colors hover:border-slate-200 hover:bg-slate-50"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600 transition-colors group-hover:bg-blue-50 group-hover:text-blue-600">
-                    <svg
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M12 4v16m8-8H4"
-                      />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800 group-hover:text-slate-900">
-                      Add Vehicle
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Register new fleet asset
-                    </p>
-                  </div>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-500">Workshop Maintenance</span>
+                  <Link href="/dashboard/maintenance" className="text-xs text-blue-600 hover:underline">
+                    View Logs &rarr;
+                  </Link>
                 </div>
-                <svg
-                  className="h-4 w-4 text-slate-400 transition-colors group-hover:text-blue-600"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </Link>
+                <p className="mt-2 text-xl font-bold text-slate-900">
+                  KES {totalMaintenanceExpenditure.toLocaleString("en-KE", { maximumFractionDigits: 0 })}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Across {maintenanceRecords.length} recorded repairs and services
+                </p>
+              </div>
 
-              <Link
-                href="/dashboard/clients/new"
-                className="group flex items-center justify-between rounded-lg border border-slate-100 p-3 transition-colors hover:border-slate-200 hover:bg-slate-50"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600 transition-colors group-hover:bg-emerald-50 group-hover:text-emerald-600">
-                    <svg
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-                      />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800 group-hover:text-slate-900">
-                      Add Client
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Onboard partner or customer
-                    </p>
-                  </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-500">Fuel Refuels</span>
+                  <Link href="/dashboard/fuel" className="text-xs text-blue-600 hover:underline">
+                    View Logs &rarr;
+                  </Link>
                 </div>
-                <svg
-                  className="h-4 w-4 text-slate-400 transition-colors group-hover:text-blue-600"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </Link>
-
-              <Link
-                href="/dashboard/reports"
-                className="group flex items-center justify-between rounded-lg border border-slate-100 p-3 transition-colors hover:border-slate-200 hover:bg-slate-50"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600 transition-colors group-hover:bg-purple-50 group-hover:text-purple-600">
-                    <svg
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                      />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800 group-hover:text-slate-900">
-                      View Reports
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Operations & analytics
-                    </p>
-                  </div>
-                </div>
-                <svg
-                  className="h-4 w-4 text-slate-400 transition-colors group-hover:text-blue-600"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </Link>
+                <p className="mt-2 text-xl font-bold text-slate-900">
+                  KES {totalFuelExpenditure.toLocaleString("en-KE", { maximumFractionDigits: 0 })}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {totalFuelLitres.toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres in {fuelRecords.length} fill-up logs
+                </p>
+              </div>
             </div>
           </div>
+        </div>
 
-          {/* Fleet Status Summary Card */}
+        {/* Right Column (1 Col): Compliance Expiry Watch & Quick Links */}
+        <div className="space-y-6">
+          {/* Compliance Expiry Watchlist */}
           <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs">
-            <div className="flex items-center justify-between pb-3">
-              <h2 className="text-base font-bold text-slate-900">
-                Fleet Availability
-              </h2>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Statutory Expiry Watch
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Documents requiring renewal attention
+                </p>
+              </div>
               <Link
-                href="/dashboard/vehicles"
-                className="text-xs font-medium text-blue-600 hover:underline"
+                href="/dashboard/compliance"
+                className="text-xs font-semibold text-blue-600 hover:underline"
               >
-                Manage &rarr;
+                All &rarr;
               </Link>
             </div>
 
-            <div className="mt-3 space-y-3.5">
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center space-x-2.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-                  <span className="font-medium text-slate-700">Active</span>
+            {complianceAlerts.length === 0 ? (
+              <div className="py-6 text-center">
+                <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                  <svg
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
                 </div>
-                <span className="font-bold text-slate-900">
-                  {activeVehicles} vehicles
-                </span>
+                <p className="mt-2 text-xs font-semibold text-slate-800">
+                  Fleet Fully Compliant
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  No expired or critical upcoming documents.
+                </p>
               </div>
+            ) : (
+              <div className="mt-3 divide-y divide-slate-100">
+                {complianceAlerts.slice(0, 5).map((alert, idx) => (
+                  <div key={`${alert.type}-${alert.id}-${idx}`} className="py-3 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between">
+                      <Link
+                        href={`/dashboard/compliance/${alert.type}/${alert.id}`}
+                        className="text-xs font-semibold text-slate-900 hover:text-blue-600 hover:underline"
+                      >
+                        {alert.vehicleDisplay}
+                      </Link>
+                      {renderDocTypeBadge(alert.type)}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-xs">
+                      <span className="text-slate-500 truncate max-w-[140px]">
+                        {alert.label}
+                      </span>
+                      {renderExpiryBadge(alert.status, alert.daysRemaining)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center space-x-2.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-amber-500"></span>
-                  <span className="font-medium text-slate-700">
-                    Maintenance
-                  </span>
-                </div>
-                <span className="font-bold text-slate-900">
-                  {maintenanceVehicles} vehicles
-                </span>
-              </div>
+          {/* Quick Operations Actions */}
+          <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-xs">
+            <h2 className="text-base font-bold text-slate-900 pb-3 border-b border-slate-100">
+              Operations Shortcuts
+            </h2>
 
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center space-x-2.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-slate-400"></span>
-                  <span className="font-medium text-slate-700">
-                    Inactive / Sold
-                  </span>
+            <div className="mt-3 space-y-2">
+              <Link
+                href="/dashboard/jobs/new"
+                className="group flex items-center justify-between rounded-lg border border-slate-100 p-2.5 transition-colors hover:border-slate-200 hover:bg-slate-50"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">Dispatch New Job</p>
+                    <p className="text-[11px] text-slate-400">CDO delivery order</p>
+                  </div>
                 </div>
-                <span className="font-bold text-slate-900">
-                  {inactiveVehicles} vehicles
-                </span>
-              </div>
+                <span className="text-xs text-slate-400 group-hover:text-blue-600">&rarr;</span>
+              </Link>
+
+              <Link
+                href="/dashboard/fuel/new"
+                className="group flex items-center justify-between rounded-lg border border-slate-100 p-2.5 transition-colors hover:border-slate-200 hover:bg-slate-50"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v16a1 1 0 001 1h8a1 1 0 001-1V4a1 1 0 00-1-1H5a1 1 0 00-1 1zm10 4h2a2 2 0 012 2v8a2 2 0 002 2h0a2 2 0 002-2V8l-3-3M7 8h4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">Log Fuel Fill-Up</p>
+                    <p className="text-[11px] text-slate-400">Record station transaction</p>
+                  </div>
+                </div>
+                <span className="text-xs text-slate-400 group-hover:text-blue-600">&rarr;</span>
+              </Link>
+
+              <Link
+                href="/dashboard/maintenance/new"
+                className="group flex items-center justify-between rounded-lg border border-slate-100 p-2.5 transition-colors hover:border-slate-200 hover:bg-slate-50"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">Add Service Log</p>
+                    <p className="text-[11px] text-slate-400">Workshop &amp; repairs</p>
+                  </div>
+                </div>
+                <span className="text-xs text-slate-400 group-hover:text-blue-600">&rarr;</span>
+              </Link>
+
+              <Link
+                href="/dashboard/compliance/new"
+                className="group flex items-center justify-between rounded-lg border border-slate-100 p-2.5 transition-colors hover:border-slate-200 hover:bg-slate-50"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600 group-hover:bg-teal-600 group-hover:text-white transition-colors">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">File Compliance</p>
+                    <p className="text-[11px] text-slate-400">Insurance, NTSA &amp; RSL</p>
+                  </div>
+                </div>
+                <span className="text-xs text-slate-400 group-hover:text-blue-600">&rarr;</span>
+              </Link>
             </div>
           </div>
         </div>
