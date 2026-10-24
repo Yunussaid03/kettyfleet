@@ -58,12 +58,21 @@ export default async function JobDetailsPage({
                     Job Details
                 </h1>
 
-                <Link
-                    href="/dashboard/jobs"
-                    className="font-medium text-green-700 hover:underline"
-                >
-                    &larr; Back to Jobs
-                </Link>
+                <div className="flex items-center space-x-3">
+                    <Link
+                        href={`/dashboard/jobs/${id}/edit`}
+                        className="rounded bg-green-700 px-4 py-2 font-medium text-white hover:bg-green-800"
+                    >
+                        Edit Job
+                    </Link>
+
+                    <Link
+                        href="/dashboard/jobs"
+                        className="font-medium text-green-700 hover:underline"
+                    >
+                        &larr; Back to Jobs
+                    </Link>
+                </div>
             </div>
 
             <div className="mt-6 space-y-2">
